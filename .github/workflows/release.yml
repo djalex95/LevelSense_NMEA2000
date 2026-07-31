@@ -1,0 +1,70 @@
+name: Build & Release
+
+# Release wird durch einen Versions-Tag ausgelöst (z. B. v1.0.0).
+# Push auf main baut kein Release, sondern nur die .exe als Artefakt.
+# Der Tag muss zur TOOL_VERSION in nmea2000_reader.py passen.
+#
+# Ergebnis ist eine eigenstaendige .exe. Der PEAK-Treiber (PCAN-Basic) muss
+# auf dem Zielrechner installiert sein, der steckt nicht mit drin.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tool:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Version ermitteln
+        id: ver
+        shell: bash
+        run: |
+          ver=$(python -c "import re;print(re.search(r'TOOL_VERSION\s*=\s*\"([^\"]+)\"', open('nmea2000_reader.py', encoding='utf-8').read()).group(1))")
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+          echo "Tool-Version: $ver"
+
+      - name: Tag == nmea2000_reader.py prüfen
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          test "${GITHUB_REF_NAME#v}" = "${{ steps.ver.outputs.ver }}" \
+            || { echo "::error::Tag ${GITHUB_REF_NAME} passt nicht zu TOOL_VERSION ${{ steps.ver.outputs.ver }}"; exit 1; }
+
+      - name: Abhängigkeiten installieren
+        run: pip install pyinstaller python-can
+
+      - name: Tool als .exe bauen
+        run: >
+          pyinstaller --onefile --windowed
+          --name "LevelSense-NMEA2000_v${{ steps.ver.outputs.ver }}"
+          --icon icon.ico
+          --add-data "icon.ico;."
+          --hidden-import can.interfaces.pcan
+          nmea2000_gui.py
+
+      - name: Artefakt ablegen
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmea2000-tool
+          path: dist/*.exe
+
+      - name: Release veröffentlichen
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.ver }}
+          name: LevelSense-NMEA2000 ${{ steps.ver.outputs.ver }}
+          body_path: RELEASE_NOTES.md
+          files: dist/LevelSense-NMEA2000_v*.exe

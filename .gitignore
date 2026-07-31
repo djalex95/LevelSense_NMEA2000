@@ -1,0 +1,15 @@
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+
+# Sicherungskopien / IDE / OS
+*.bak
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
