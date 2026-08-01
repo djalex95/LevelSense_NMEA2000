@@ -36,6 +36,7 @@ import can
 from nmea2000_reader import (
     BITRATE, FLUID_TYPES, PC_SOURCE_ADDR, PROP_PGN, SENSOR_ADDR, TOOL_VERSION,
     FastPacketAssembler, build_calib_max, build_calib_reset,
+    build_ble_diag,
     build_gf_command_127505, build_lin_table_read, build_lin_table_write,
     build_commanded_address, build_factory_reset, build_gf_command_name,
     decode_address_claim, decode_can_id, decode_config_info,
@@ -213,6 +214,11 @@ class App:
         self.btn_cmdaddr = ttk.Button(row2, text="Adresse zuweisen…",
                                       command=self.assign_address, state="disabled")
         self.btn_cmdaddr.pack(side="right", padx=(0, 6))
+        # Diagnose des BLE-Zweigs über den CAN-Bus - der einzige Weg, der noch
+        # funktioniert, wenn sich kein Handy mehr koppeln lässt.
+        self.btn_blediag = ttk.Button(row2, text="BLE-Diagnose",
+                                      command=self.ble_diag, state="disabled")
+        self.btn_blediag.pack(side="right", padx=(0, 6))
         row3 = ttk.Frame(busf)
         row3.pack(fill="x", pady=(2, 0))
         ttk.Label(row3, text="Name:").pack(side="left")
@@ -331,6 +337,7 @@ class App:
             self.btn_claim.config(state="normal")
             self.btn_cmdaddr.config(state="normal")
             self.btn_freset.config(state="normal")
+            self.btn_blediag.config(state="normal")
             self.btn_name.config(state="normal")
             self.lbl_hb.config(text="Heartbeat: warte auf ersten (≤ 60 s) …",
                                foreground="#555")
@@ -358,6 +365,7 @@ class App:
         self.btn_claim.config(state="disabled")
         self.btn_cmdaddr.config(state="disabled")
         self.btn_freset.config(state="disabled")
+        self.btn_blediag.config(state="disabled")
         self.btn_name.config(state="disabled")
         self.status.config(text="getrennt", foreground="red")
         self.log_line("Getrennt.")
@@ -584,6 +592,10 @@ class App:
         except can.CanError as e:
             self.log_line(f"Senden fehlgeschlagen: {e}")
 
+    def ble_diag(self):
+        """BLE-Diagnose beim Sensor abfragen (Antwort läuft ins Protokoll)."""
+        self._send_prop(build_ble_diag(), "BLE-Diagnose angefragt")
+
     def read_lin_table(self):
         if not self.bus:
             return
@@ -690,6 +702,9 @@ class App:
                     self.log_line(f"[0x{c_src:02X}] Config Info: "
                                   f"Name='{fields[0] or '–'}'"
                                   + (f"  ({fields[2]})" if fields[2] else ""))
+                elif kind == "ble_diag":
+                    for ln in payload.split("\n"):
+                        self.log_line(ln)
                 elif kind == "lin_ack":
                     self.log_line(payload)
                 elif kind == "calib_ack":

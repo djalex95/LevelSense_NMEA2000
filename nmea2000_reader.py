@@ -28,7 +28,7 @@ import can
 # die CI. Drei Stellen: groessere Aenderung, kleineres Feature, Bugfix.
 # Freigabe per Tag vX.Y.Z in diesem Repository; die CI prueft, dass Tag und
 # diese Zahl zusammenpassen.
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 
 BITRATE = 250000          # NMEA2000-Standard
 PC_SOURCE_ADDR = 0x25     # Quelladresse dieses PC-Tools am Bus
@@ -293,6 +293,7 @@ PROP_CMD_GET_LIN = 0x02
 PROP_CMD_CALIB = 0x03         # aktuellen Druck als 100 % kalibrieren
 PROP_CMD_RESET = 0x04         # Kalibrierung zurücksetzen
 PROP_CMD_FRESET = 0x05        # Werksreset: kompletten Config löschen + Neustart
+PROP_CMD_BLEDIAG = 0x06       # BLE-Diagnose: Zustand + Ereignisprotokoll
 
 
 def build_lin_table_write(points) -> bytes:
@@ -317,6 +318,107 @@ def build_factory_reset() -> bytes:
     """Werksreset: löscht Kalibrierung, Tankform, Instanz, Name und die
     gespeicherte Adresse; der Sensor startet neu (Adresse 0x21)."""
     return PROP_HEADER + bytes([PROP_CMD_FRESET])
+
+
+def build_ble_diag() -> bytes:
+    """BLE-Diagnose anfordern.
+
+    Gedacht für genau den Fall, in dem sich kein Handy mehr koppeln lässt:
+    dann ist BLE als Diagnoseweg ja gerade nicht verfügbar. Der Sensor
+    antwortet über den CAN-Bus mit dem Zustand der Provisionierung, den aus
+    dem Funkmodul zurückgelesenen Sicherheitseinstellungen und einem
+    Protokoll der letzten Ereignisse zwischen STM32 und Funkmodul.
+    """
+    return PROP_HEADER + bytes([PROP_CMD_BLEDIAG])
+
+
+# Bit 24..30 von RCC->CSR, um 24 nach rechts geschoben (STM32G0).
+_RESET_CAUSES = ["Option-Byte", "Reset-Pin", "Spannung (POR/BOR)", "Software",
+                 "Watchdog (IWDG)", "Fenster-Watchdog (WWDG)", "Low-Power"]
+
+# Empfangen (Modul -> STM32). Antworten liegen laut Proteus-Protokoll immer
+# bei >= 0x41 (CNF = base|0x40, IND = base|0x80, RSP = base|0xC0).
+_BLE_EV_RX = {
+    0x41: "GETSTATE_CNF  (Modul ist [neu] gestartet)",
+    0x44: "DATA_CNF",
+    0x4E: "DELETEBONDS_CNF",
+    0x4F: "GETBONDS_CNF",
+    0x50: "GET_CNF       (Einstellung gelesen)",
+    0x51: "SET_CNF       (Einstellung geschrieben)",
+    0x84: "DATA_IND",
+    0x86: "CONNECT_IND   (Handy verbunden)",
+    0x87: "DISCONNECT_IND(Verbindung beendet)",
+    0x88: "SECURITY_IND  (Pairing gelaufen)",
+    0xC4: "TXCOMPLETE_RSP",
+    0xC6: "CHANNELOPEN_RSP (Datenkanal offen)",
+}
+# Gesendet (STM32 -> Modul), im Protokoll als 0x20|Kommando abgelegt.
+_BLE_EV_TX = {
+    0x00: "RESET_REQ",
+    0x01: "GETSTATE_REQ",
+    0x07: "DISCONNECT_REQ",
+    0x0E: "DELETEBONDS_REQ",
+    0x0F: "GETBONDS_REQ",
+    0x10: "GET_REQ",
+    0x11: "SET_REQ",
+}
+
+
+def _ble_ev_name(ev: int):
+    if ev == 0xFE:
+        return "--", "STM32 gestartet"
+    if ev < 0x40:
+        c = ev & 0x1F
+        return "->", _BLE_EV_TX.get(c, f"CMD 0x{c:02X}")
+    return "<-", _BLE_EV_RX.get(ev, f"CMD 0x{ev:02X}")
+
+
+def decode_ble_diag(data: bytes, src: int) -> str:
+    """Antwort 0x86 in lesbaren Text übersetzen (Aufbau: Core/Src/nmea_app.c)."""
+    if len(data) < 25:
+        return f"[0x{src:02X}] BLE-Diagnose: Antwort zu kurz ({len(data)} Byte)"
+
+    rc = data[4]
+    causes = [n for i, n in enumerate(_RESET_CAUSES) if rc & (1 << i)]
+    marker = data[8]
+    rb = data[11]
+    secflags = data[12]
+    passkey = data[13:19]
+    modfw = data[19:22]
+    now = data[22] | (data[23] << 8)
+    n = data[24]
+
+    steps = {0: "0 = Modulname", 1: "1 = Sicherheit provisionieren", 2: "2 = fertig"}
+    subs = {0: "0 = Reset", 1: "1 = SecFlags", 2: "2 = Passkey",
+            3: "3 = Bonds löschen", 4: "4 = Reset"}
+
+    pk = "".join(chr(b) for b in passkey) if all(0x30 <= b <= 0x39 for b in passkey) else "?"
+
+    L = [f"[0x{src:02X}] BLE-Diagnose (Laufzeit {now / 10:.1f} s)",
+         f"    letzter Neustart : {', '.join(causes) if causes else f'unbekannt (0x{rc:02X})'}",
+         f"    Kette            : Schritt {steps.get(data[5], data[5])}, "
+         f"Teilschritt {subs.get(data[6], data[6])}, {data[7]} Anläufe",
+         f"    Provisionierung  : " + ("abgeschlossen" if marker == 0xB5
+                                       else f"OFFEN (Marker 0x{marker:02X})"),
+         f"    Bond-Heilungen   : {data[9]},  Fehlversuche in Folge: {data[10]}",
+         "    im Modul steht   : " + (
+             f"SecFlags 0x{secflags:02X} "
+             + ("(Static Passkey + Bonding, wie gewollt)" if secflags == 0x0B
+                else "*** NICHT 0x0B - Modul ist nicht im erwarteten Modus ***")
+             if rb & 0x01 else "SecFlags: nicht gelesen"),
+         "    PIN im Modul     : " + (pk if rb & 0x02 else "nicht gelesen"),
+         "    Modul-Firmware   : " + (f"{modfw[0]}.{modfw[1]}.{modfw[2]}"
+                                      if rb & 0x04 else "nicht gelesen"),
+         f"    Ereignisse ({n}):"]
+
+    for i in range(n):
+        o = 25 + 4 * i
+        if o + 4 > len(data):
+            break
+        t = data[o] | (data[o + 1] << 8)
+        d, name = _ble_ev_name(data[o + 2])
+        L.append(f"      {t / 10:8.1f} s  {d} {name}   (0x{data[o + 3]:02X})")
+    return "\n".join(L)
 
 
 def build_commanded_address(name8: bytes, new_addr: int) -> bytes:
@@ -351,6 +453,8 @@ def decode_prop(data: bytes, src: int):
                              + ("übernommen" if ok else "abgelehnt (kein gültiger Druck)"))
     if data[2] == 0x84 and len(data) >= 4:
         return ("calib_ack", f"[0x{src:02X}] Kalibrierung auf Werkswert zurückgesetzt")
+    if data[2] == 0x86 and len(data) >= 25:
+        return ("ble_diag", decode_ble_diag(data, src))
     if data[2] == 0x85 and len(data) >= 4:
         return ("calib_ack", f"[0x{src:02X}] Werksreset bestätigt – Sensor startet neu "
                              f"(neue Adresse 0x21)")
@@ -422,8 +526,8 @@ def main():
                     elif pgn == PROP_PGN:
                         r = decode_prop(full, src)
                         if r:
-                            out = (r[1] if r[0] == "lin_ack"
-                                   else f"[0x{src:02X}] Stützstellen: {r[1]}")
+                            out = (f"[0x{src:02X}] Stützstellen: {r[1]}"
+                                   if r[0] == "lin_table" else r[1])
                     else:
                         txt = full.split(b"\xff")[0].decode("ascii", "replace")
                         out = f"[0x{src:02X}] Device Info: '{txt}'"
