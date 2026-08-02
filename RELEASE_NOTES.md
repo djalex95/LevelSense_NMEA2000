@@ -43,6 +43,12 @@ langsamen Verändern des Drucks zusehen, an welcher Stelle ein Wert springt. Das
 proprietäre Kommando ist `0x07`, die Antwort `0x87`; der Sensor braucht dafür
 Firmware 2.0.0.
 
+Liegt der Rohwert außerhalb des Nennbereichs, steht in der Zeile mit dem Abstand
+zur Bereichsmitte auch die Richtung, an der die Firmware den Wert festhält –
+Über- oder Unterdruck. Das ist der Fall, in dem der Registerwert selbst nichts
+mehr verrät: jenseits von ±32768 digits läuft er um und sieht in beiden
+Richtungen gleich aus.
+
 ## 1.0.0
 
 **Eigenes Repository, eigene Versionsnummer.** Das Tool meldet seine Version

@@ -453,6 +453,7 @@ def decode_sensor_raw(data: bytes, src: int) -> str:
     if len(data) < 46:
         return f"[0x{src:02X}] Rohwerte: Antwort zu kurz ({len(data)} Byte)"
 
+    ver = data[3]
     raw_p = _i32le(data, 4)
     raw_t = _i32le(data, 8)
     delta = _i32le(data, 12)
@@ -473,11 +474,24 @@ def decode_sensor_raw(data: bytes, src: int) -> str:
     # selbst und die Zeile entsprechend bedeutungslos.
     halfspan = 13107
 
+    # Ab Aufbau 0x02 meldet Byte 20 nicht mehr nur ja/nein, sondern die
+    # Richtung: 1 = über, 2 = unter dem Nennbereich. Die Firmware hält sie
+    # fest, solange der Sensor draußen bleibt - sonst schlüge starker
+    # Unterdruck jenseits von -32768 digits in vollen Überdruck um.
+    if sat == 0:
+        hinweis = ""
+    elif ver < 0x02:
+        hinweis = "   *** ausserhalb, Wert wird begrenzt ***"
+    else:
+        richtung = "Ueberdruck" if sat == 1 else "Unterdruck"
+        vorz = "+" if sat == 1 else "-"
+        hinweis = (f"   *** ausserhalb ({richtung}), Wert wird auf "
+                   f"{vorz}Vollausschlag gehalten ***")
+
     return "\n".join([
         f"[0x{src:02X}] Rohwerte der Druckmessung",
         f"    Rohwert Druck    : {raw_p}  (0x{raw_p & 0xFFFF:04X})",
-        f"    Abstand zur Mitte: {delta:+d} digits von +/-{halfspan}"
-        + ("   *** ausserhalb, Wert wird begrenzt ***" if sat else ""),
+        f"    Abstand zur Mitte: {delta:+d} digits von +/-{halfspan}" + hinweis,
         f"    Druck vor Offset : {ubar_raw:+d} uBar = {ubar_raw / 1000:+.3f} mBar",
         f"    Offset           : {offset:+d} uBar",
         f"    Druck ungefiltert: {unfilt:+d} uBar = {unfilt / 1000:+.3f} mBar",
