@@ -36,7 +36,7 @@ import can
 from nmea2000_reader import (
     BITRATE, FLUID_TYPES, PC_SOURCE_ADDR, PROP_PGN, SENSOR_ADDR, TOOL_VERSION,
     FastPacketAssembler, build_calib_max, build_calib_reset,
-    build_ble_diag,
+    build_ble_diag, build_sensor_raw,
     build_gf_command_127505, build_lin_table_read, build_lin_table_write,
     build_commanded_address, build_factory_reset, build_gf_command_name,
     decode_address_claim, decode_can_id, decode_config_info,
@@ -57,6 +57,7 @@ MONITOR_MAX_LINES = 2000   # Zeilen-Limit des NMEA-Log-Fensters
 
 HISTORY_SECONDS = 300      # Zeitfenster des Verlaufsgraphen
 POLL_MS = 100              # GUI-Poll-Intervall für die RX-Queue
+RAW_POLL_MS = 500          # Takt der laufenden Rohwert-Abfrage
 
 
 def parse_fluid_level(data: bytes):
@@ -161,6 +162,7 @@ class App:
         self.devices = {}               # src -> {"name","instance","fluid","last"}
         self.sel_src = None             # ausgewählter Sensor (None = auto)
         self._combo_srcs = []           # Reihenfolge der Combobox-Einträge
+        self._raw_job = None            # laufende Rohwert-Abfrage (after-ID)
 
         # ---- Verbindungszeile ----
         top = ttk.Frame(root, padding=8)
@@ -219,6 +221,13 @@ class App:
         self.btn_blediag = ttk.Button(row2, text="BLE-Diagnose",
                                       command=self.ble_diag, state="disabled")
         self.btn_blediag.pack(side="right", padx=(0, 6))
+        # Rohwerte der Druckmessung, fortlaufend. Gedacht zum Zusehen, während
+        # von Hand Druck verändert wird - ein einzelner Abruf trifft den
+        # Umschlagpunkt nie.
+        self.btn_sensraw = ttk.Button(row2, text="Rohwerte",
+                                      command=self.toggle_sensor_raw,
+                                      state="disabled")
+        self.btn_sensraw.pack(side="right", padx=(0, 6))
         row3 = ttk.Frame(busf)
         row3.pack(fill="x", pady=(2, 0))
         ttk.Label(row3, text="Name:").pack(side="left")
@@ -338,6 +347,7 @@ class App:
             self.btn_cmdaddr.config(state="normal")
             self.btn_freset.config(state="normal")
             self.btn_blediag.config(state="normal")
+            self.btn_sensraw.config(state="normal")
             self.btn_name.config(state="normal")
             self.lbl_hb.config(text="Heartbeat: warte auf ersten (≤ 60 s) …",
                                foreground="#555")
@@ -349,6 +359,7 @@ class App:
             self.disconnect()
 
     def disconnect(self):
+        self.stop_sensor_raw()
         if self.rx:
             self.rx.stop_flag.set()
             self.rx.join(timeout=1)
@@ -366,6 +377,7 @@ class App:
         self.btn_cmdaddr.config(state="disabled")
         self.btn_freset.config(state="disabled")
         self.btn_blediag.config(state="disabled")
+        self.btn_sensraw.config(state="disabled")
         self.btn_name.config(state="disabled")
         self.status.config(text="getrennt", foreground="red")
         self.log_line("Getrennt.")
@@ -583,18 +595,55 @@ class App:
         except (can.CanError, ValueError) as e:
             self.log_line(f"Senden fehlgeschlagen: {e}")
 
-    def _send_prop(self, payload, msg):
+    def _send_prop(self, payload, msg, quiet=False):
         if not self.bus:
             return
         try:
             send_fast_packet(self.bus, PROP_PGN, self.sensor_addr, PC_SOURCE_ADDR, payload)
-            self.log_line(f">> {msg} (an 0x{self.sensor_addr:02X})")
+            if not quiet:
+                self.log_line(f">> {msg} (an 0x{self.sensor_addr:02X})")
         except can.CanError as e:
             self.log_line(f"Senden fehlgeschlagen: {e}")
 
     def ble_diag(self):
         """BLE-Diagnose beim Sensor abfragen (Antwort läuft ins Protokoll)."""
         self._send_prop(build_ble_diag(), "BLE-Diagnose angefragt")
+
+    # ---------------- Rohwerte der Druckmessung ----------------
+
+    def toggle_sensor_raw(self):
+        """Rohwert-Abfrage starten oder anhalten."""
+        if self._raw_job is None:
+            self.start_sensor_raw()
+        else:
+            self.stop_sensor_raw()
+
+    def start_sensor_raw(self):
+        if not self.bus or self._raw_job is not None:
+            return
+        self.btn_sensraw.config(text="Rohwerte stoppen")
+        self.log_line(f">> Rohwerte von 0x{self.sensor_addr:02X}, alle "
+                      f"{RAW_POLL_MS / 1000:.1f} s – zum Beenden erneut klicken")
+        self._sensor_raw_tick()
+
+    def stop_sensor_raw(self):
+        if self._raw_job is None:
+            return
+        self.root.after_cancel(self._raw_job)
+        self._raw_job = None
+        self.btn_sensraw.config(text="Rohwerte")
+        self.log_line("Rohwert-Abfrage beendet.")
+
+    def _sensor_raw_tick(self):
+        """Eine Abfrage senden und die nächste einplanen. Das Senden läuft ohne
+        Protokolleintrag - bei zwei Abfragen je Sekunde bliebe von der Antwort
+        sonst nichts mehr zu lesen."""
+        if not self.bus:
+            self._raw_job = None
+            self.btn_sensraw.config(text="Rohwerte")
+            return
+        self._send_prop(build_sensor_raw(), "Rohwerte angefragt", quiet=True)
+        self._raw_job = self.root.after(RAW_POLL_MS, self._sensor_raw_tick)
 
     def read_lin_table(self):
         if not self.bus:
@@ -703,6 +752,9 @@ class App:
                                   f"Name='{fields[0] or '–'}'"
                                   + (f"  ({fields[2]})" if fields[2] else ""))
                 elif kind == "ble_diag":
+                    for ln in payload.split("\n"):
+                        self.log_line(ln)
+                elif kind == "sens_raw":
                     for ln in payload.split("\n"):
                         self.log_line(ln)
                 elif kind == "lin_ack":

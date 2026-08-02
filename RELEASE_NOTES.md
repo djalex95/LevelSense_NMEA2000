@@ -28,6 +28,21 @@ sichtbar gemacht haben: `ERROR_IND` als Fehlermeldung des Funkmoduls,
 unterdrueckt` für einen Sendeversuch auf einer noch unverschlüsselten
 Verbindung.
 
+**Rohwerte der Druckmessung.** Neue Schaltfläche »Rohwerte«. Sie fragt den
+Sensor zweimal je Sekunde nach der kompletten Rechenkette einer Messung:
+Registerwert, Abstand zur Bereichsmitte samt Bereichsgrenze, µBar vor und nach
+dem Offset, gefilterter Druck, Temperatur, Füllhöhe vor und nach der
+Linearisierung sowie Messbereich, Kalibrierwert und Fehlerbits. Erneutes
+Klicken beendet die Abfrage.
+
+Gedacht ist das für Messfehler, die man an der App nicht mehr auseinanderhalten
+kann. Steht dort der Wert am Bereichsende, ist nicht zu erkennen, ob der Sensor
+tatsächlich dort liegt oder ob eine Zwischenstufe umgeschlagen ist – die App
+zeigt nur das Ende der Kette. Mit der laufenden Abfrage lässt sich beim
+langsamen Verändern des Drucks zusehen, an welcher Stelle ein Wert springt. Das
+proprietäre Kommando ist `0x07`, die Antwort `0x87`; der Sensor braucht dafür
+Firmware 2.0.0.
+
 ## 1.0.0
 
 **Eigenes Repository, eigene Versionsnummer.** Das Tool meldet seine Version

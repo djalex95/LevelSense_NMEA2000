@@ -4,8 +4,10 @@ PC-Programm für den NMEA2000-Füllstandsensor (STM32G0B1), angebunden über
 einen PEAK PCAN-USB-Adapter. Zeigt den Füllstand live an, liest Address Claim,
 Product Info und Heartbeat mit und schreibt die Konfiguration: Fluidtyp,
 Kapazität, Instanz, Sensorname, Tankform-Kennlinie, 100-%-Kalibrierung und
-Werksreset. Ausserdem liest es die BLE-Diagnose des Sensors aus – den einzigen
-Weg, der noch offen ist, wenn sich kein Handy mehr koppeln lässt.
+Werksreset. Ausserdem liest es zwei Diagnosen des Sensors aus: die des
+BLE-Zweigs – den einzigen Weg, der noch offen ist, wenn sich kein Handy mehr
+koppeln lässt – und die Rohwerte der Druckmessung, Stufe für Stufe vom
+Registerwert bis zum Prozentwert.
 
 Das Programm lag bis 1.0.0 als `PC_Tools/` im Repository
 `CAN_FuellstandsensorBLE` und hatte weder eine eigene Versionsnummer noch ein

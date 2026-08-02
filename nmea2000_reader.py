@@ -294,6 +294,7 @@ PROP_CMD_CALIB = 0x03         # aktuellen Druck als 100 % kalibrieren
 PROP_CMD_RESET = 0x04         # Kalibrierung zurücksetzen
 PROP_CMD_FRESET = 0x05        # Werksreset: kompletten Config löschen + Neustart
 PROP_CMD_BLEDIAG = 0x06       # BLE-Diagnose: Zustand + Ereignisprotokoll
+PROP_CMD_SENSRAW = 0x07       # Rohwerte der Druckmessung, Stufe für Stufe
 
 
 def build_lin_table_write(points) -> bytes:
@@ -330,6 +331,18 @@ def build_ble_diag() -> bytes:
     Protokoll der letzten Ereignisse zwischen STM32 und Funkmodul.
     """
     return PROP_HEADER + bytes([PROP_CMD_BLEDIAG])
+
+
+def build_sensor_raw() -> bytes:
+    """Rohwerte der Druckmessung anfordern.
+
+    Die App zeigt nur das Ende der Rechenkette. Steht der Wert dort an der
+    Bereichsgrenze, ist nicht mehr zu erkennen, ob der Sensor tatsächlich
+    dort liegt oder ob eine Zwischenstufe umgeschlagen ist. Diese Antwort
+    liefert jede Stufe einzeln: Registerwert, Abstand zur Bereichsmitte,
+    µBar vor und nach Offset, gefilterter Wert und Prozent.
+    """
+    return PROP_HEADER + bytes([PROP_CMD_SENSRAW])
 
 
 # Bit 24..30 von RCC->CSR, um 24 nach rechts geschoben (STM32G0).
@@ -425,6 +438,59 @@ def decode_ble_diag(data: bytes, src: int) -> str:
     return "\n".join(L)
 
 
+def _i32le(b: bytes, o: int) -> int:
+    v = int.from_bytes(b[o:o + 4], "little")
+    return v - (1 << 32) if v & 0x80000000 else v
+
+
+def _i16le(b: bytes, o: int) -> int:
+    v = b[o] | (b[o + 1] << 8)
+    return v - 65536 if v & 0x8000 else v
+
+
+def decode_sensor_raw(data: bytes, src: int) -> str:
+    """Antwort 0x87 in lesbaren Text übersetzen (Aufbau: Core/Src/nmea_app.c)."""
+    if len(data) < 46:
+        return f"[0x{src:02X}] Rohwerte: Antwort zu kurz ({len(data)} Byte)"
+
+    raw_p = _i32le(data, 4)
+    raw_t = _i32le(data, 8)
+    delta = _i32le(data, 12)
+    ubar_raw = _i32le(data, 16)
+    sat = data[20]
+    offset = _i16le(data, 21)
+    unfilt = _i32le(data, 23)
+    filt = _i32le(data, 27)
+    temp = _i16le(data, 31)
+    pct_raw = data[33] | (data[34] << 8)
+    pct_val = data[35] | (data[36] << 8)
+    max_val = int.from_bytes(data[37:41], "little")
+    err = data[41]
+    fs = _i32le(data, 42)
+
+    # Halbe Nennspanne des PDMS in digits (sensor_scale.h). Beim alten
+    # 24-Bit-Sensor gibt es keine Bereichsmitte, dort ist delta der Rohwert
+    # selbst und die Zeile entsprechend bedeutungslos.
+    halfspan = 13107
+
+    return "\n".join([
+        f"[0x{src:02X}] Rohwerte der Druckmessung",
+        f"    Rohwert Druck    : {raw_p}  (0x{raw_p & 0xFFFF:04X})",
+        f"    Abstand zur Mitte: {delta:+d} digits von +/-{halfspan}"
+        + ("   *** ausserhalb, Wert wird begrenzt ***" if sat else ""),
+        f"    Druck vor Offset : {ubar_raw:+d} uBar = {ubar_raw / 1000:+.3f} mBar",
+        f"    Offset           : {offset:+d} uBar",
+        f"    Druck ungefiltert: {unfilt:+d} uBar = {unfilt / 1000:+.3f} mBar",
+        f"    Druck gefiltert  : {filt:+d} uBar = {filt / 1000:+.3f} mBar",
+        f"    Temperatur       : {temp / 100:+.2f} GrdC  (Rohwert {raw_t})",
+        f"    Fuellhoehe       : {pct_raw / 100:.2f} % vor, {pct_val / 100:.2f} % "
+        f"nach Linearisierung",
+        f"    100 % entspricht : {max_val / 10:.1f} mBar,  Vollausschlag "
+        f"+/-{fs / 1000:.3f} mBar",
+        f"    Fehlerbits       : 0x{err:02X}",
+    ])
+
+
 def build_commanded_address(name8: bytes, new_addr: int) -> bytes:
     """PGN 65240 Commanded Address (ISO 11783-5): 8 Byte NAME des Zielgeräts
     (aus dessen Address Claim) + 1 Byte neue Quelladresse (0..251)."""
@@ -459,6 +525,8 @@ def decode_prop(data: bytes, src: int):
         return ("calib_ack", f"[0x{src:02X}] Kalibrierung auf Werkswert zurückgesetzt")
     if data[2] == 0x86 and len(data) >= 25:
         return ("ble_diag", decode_ble_diag(data, src))
+    if data[2] == 0x87 and len(data) >= 46:
+        return ("sens_raw", decode_sensor_raw(data, src))
     if data[2] == 0x85 and len(data) >= 4:
         return ("calib_ack", f"[0x{src:02X}] Werksreset bestätigt – Sensor startet neu "
                              f"(neue Adresse 0x21)")
