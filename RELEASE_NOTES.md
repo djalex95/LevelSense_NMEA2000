@@ -22,6 +22,12 @@ neu gestartet hat (mit Grund aus `RCC->CSR`) – oder ob in dem Moment schlicht
 nichts passiert ist. Das proprietäre Kommando ist `0x06`, die Antwort `0x86`;
 der Sensor braucht dafür Firmware 2.0.0.
 
+Benannt werden dabei auch die Ereignisse, die den Fehler ab Firmware 2.0.0
+sichtbar gemacht haben: `ERROR_IND` als Fehlermeldung des Funkmoduls,
+`DATA_REQ` für die ersten Nutzdaten einer Verbindung und `Senden
+unterdrueckt` für einen Sendeversuch auf einer noch unverschlüsselten
+Verbindung.
+
 ## 1.0.0
 
 **Eigenes Repository, eigene Versionsnummer.** Das Tool meldet seine Version

@@ -351,6 +351,7 @@ _BLE_EV_RX = {
     0x88: "SECURITY_IND  (Pairing gelaufen)",
     0xC4: "TXCOMPLETE_RSP",
     0xC6: "CHANNELOPEN_RSP (Datenkanal offen)",
+    0xA2: "ERROR_IND     (Modul meldet Fehler!)",
 }
 # Gesendet (STM32 -> Modul), im Protokoll als 0x20|Kommando abgelegt.
 _BLE_EV_TX = {
@@ -361,12 +362,15 @@ _BLE_EV_TX = {
     0x0F: "GETBONDS_REQ",
     0x10: "GET_REQ",
     0x11: "SET_REQ",
+    0x04: "DATA_REQ      (erste Nutzdaten dieser Verbindung)",
 }
 
 
 def _ble_ev_name(ev: int):
     if ev == 0xFE:
         return "--", "STM32 gestartet"
+    if ev == 0x3F:
+        return "!!", "Senden unterdrueckt (noch nicht verschluesselt)"
     if ev < 0x40:
         c = ev & 0x1F
         return "->", _BLE_EV_TX.get(c, f"CMD 0x{c:02X}")
