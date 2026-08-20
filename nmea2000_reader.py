@@ -28,7 +28,7 @@ import can
 # die CI. Drei Stellen: groessere Aenderung, kleineres Feature, Bugfix.
 # Freigabe per Tag vX.Y.Z in diesem Repository; die CI prueft, dass Tag und
 # diese Zahl zusammenpassen.
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 
 BITRATE = 250000          # NMEA2000-Standard
 PC_SOURCE_ADDR = 0x25     # Quelladresse dieses PC-Tools am Bus
@@ -295,6 +295,7 @@ PROP_CMD_RESET = 0x04         # Kalibrierung zurücksetzen
 PROP_CMD_FRESET = 0x05        # Werksreset: kompletten Config löschen + Neustart
 PROP_CMD_BLEDIAG = 0x06       # BLE-Diagnose: Zustand + Ereignisprotokoll
 PROP_CMD_SENSRAW = 0x07       # Rohwerte der Druckmessung, Stufe für Stufe
+PROP_CMD_BLEEVT = 0x08        # Langzeit-Protokoll: Zähler + seltene Ereignisse
 
 
 def build_lin_table_write(points) -> bytes:
@@ -343,6 +344,19 @@ def build_sensor_raw() -> bytes:
     µBar vor und nach Offset, gefilterter Wert und Prozent.
     """
     return PROP_HEADER + bytes([PROP_CMD_SENSRAW])
+
+
+def build_ble_events() -> bytes:
+    """Langzeit-Protokoll des BLE-Zweigs anfordern.
+
+    Das Ereignisprotokoll der BLE-Diagnose fasst 24 Einträge und wird im
+    Normalbetrieb binnen Minuten überschrieben; sein Zeitstempel läuft nach
+    109 Minuten um. Für Fehler, die erst nach Stunden auftreten - etwa eine
+    Kopplung, die sich über Nacht verabschiedet - liefert diese Antwort die
+    Zähler seit dem Start und nur die seltenen Ereignisse, dafür mit
+    Zeitstempel in Sekunden.
+    """
+    return PROP_HEADER + bytes([PROP_CMD_BLEEVT])
 
 
 # Bit 24..30 von RCC->CSR, um 24 nach rechts geschoben (STM32G0).
@@ -435,6 +449,70 @@ def decode_ble_diag(data: bytes, src: int) -> str:
         t = data[o] | (data[o + 1] << 8)
         d, name = _ble_ev_name(data[o + 2])
         L.append(f"      {t / 10:8.1f} s  {d} {name}   (0x{data[o + 3]:02X})")
+    return "\n".join(L)
+
+
+def _fmt_uptime(sec: int) -> str:
+    """Sekunden als 'T d HH:MM:SS' - bei Laufzeiten über Tage lesbarer."""
+    d, r = divmod(int(sec), 86400)
+    h, r = divmod(r, 3600)
+    m, sc = divmod(r, 60)
+    return f"{d} d {h:02d}:{m:02d}:{sc:02d}"
+
+
+def _ble_evt_text(ev: int, p: int) -> str:
+    if ev == 0x01:
+        return "STM32 gestartet"
+    if ev == 0x02:
+        return f"Funkmodul gestartet (Status 0x{p:02X})"
+    if ev == 0x03:
+        return ("Pairing: frisch gekoppelt (kein bekannter Bond)" if p == 0x01
+                else f"Pairing: Status 0x{p:02X}")
+    if ev == 0x04:
+        return f"*** Modul meldet Fehler (0x{p:02X}) ***"
+    if ev == 0x05:
+        return "Bonds im Modul geloescht"
+    if ev == 0x06:
+        return "Modul-Reset gesendet"
+    if ev == 0x07:
+        return f"*** Bond-Selbstheilung ausgeloest (Heilung Nr. {p}) ***"
+    if ev == 0x08:
+        return f"Verbindung ohne Verschluesselung beendet (Zaehler jetzt {p})"
+    return f"unbekanntes Ereignis 0x{ev:02X} (0x{p:02X})"
+
+
+def decode_ble_events(data: bytes, src: int) -> str:
+    """Antwort 0x88 in lesbaren Text übersetzen (Aufbau: Core/Src/nmea_app.c)."""
+    if len(data) < 33:
+        return f"[0x{src:02X}] BLE-Langzeitprotokoll: Antwort zu kurz ({len(data)} Byte)"
+
+    ver = data[3]
+    up = int.from_bytes(data[4:8], "little")
+    conn = int.from_bytes(data[8:12], "little")
+    sec = int.from_bytes(data[12:16], "little")
+    nosec = int.from_bytes(data[16:20], "little")
+    heal = int.from_bytes(data[20:24], "little")
+    heal_t = int.from_bytes(data[24:28], "little")
+    modboot = int.from_bytes(data[28:32], "little")
+    n = data[32]
+
+    L = [f"[0x{src:02X}] BLE-Langzeitprotokoll (Laufzeit {_fmt_uptime(up)})"]
+    if ver != 0x01:
+        L.append(f"    *** unbekannte Antwortversion {ver} - Anzeige evtl. falsch ***")
+    L += [f"    Verbindungen     : {conn}, verschluesselt beendet {sec}, "
+          f"ohne Verschluesselung {nosec}",
+          "    Selbstheilungen  : " + (
+              f"{heal}, zuletzt bei Laufzeit {_fmt_uptime(heal_t)}" if heal
+              else "0 (die Firmware hat die Bonds nicht angefasst)"),
+          f"    Modul-Neustarts  : {modboot}",
+          f"    Ereignisse ({n}):"]
+
+    for i in range(n):
+        o = 33 + 6 * i
+        if o + 6 > len(data):
+            break
+        t = int.from_bytes(data[o:o + 4], "little")
+        L.append(f"      {_fmt_uptime(t)}  {_ble_evt_text(data[o + 4], data[o + 5])}")
     return "\n".join(L)
 
 
@@ -541,6 +619,8 @@ def decode_prop(data: bytes, src: int):
         return ("ble_diag", decode_ble_diag(data, src))
     if data[2] == 0x87 and len(data) >= 46:
         return ("sens_raw", decode_sensor_raw(data, src))
+    if data[2] == 0x88 and len(data) >= 33:
+        return ("ble_evt", decode_ble_events(data, src))
     if data[2] == 0x85 and len(data) >= 4:
         return ("calib_ack", f"[0x{src:02X}] Werksreset bestätigt – Sensor startet neu "
                              f"(neue Adresse 0x21)")

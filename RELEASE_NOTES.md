@@ -6,6 +6,30 @@ Versionen. Vorher lag es als `PC_Tools/` im Repository
 wollte, musste sich den Quelltext holen und Python einrichten. Freigabe per Tag
 `vX.Y.Z`.
 
+## 1.2.0
+
+**Langzeitprotokoll des BLE-Zweigs.** Neue Schaltfläche »BLE-Langzeit«. Die
+BLE-Diagnose aus 1.1.0 zeigt die letzten 24 Ereignisse zwischen
+Mikrocontroller und Funkmodul - im Normalbetrieb ist dieser Puffer nach
+wenigen Minuten überschrieben, und sein Zeitstempel läuft nach 109 Minuten um.
+Für einen Fehler, der erst nach Stunden auftritt, taugt er deshalb nicht.
+
+Die neue Antwort liefert stattdessen Zähler, die seit dem Start des Sensors
+weiterlaufen - Verbindungen insgesamt, davon verschlüsselt beendete, ohne
+Verschlüsselung beendete, Selbstheilungen und Neustarts des Funkmoduls - und
+ein zweites Protokoll, in das nur die seltenen Ereignisse geschrieben werden:
+Neustarts, frische Kopplungen, gelöschte Bonds und jede ausgelöste
+Selbstheilung. Zeitstempel in Sekunden seit dem Start, angezeigt als Tage und
+Uhrzeit.
+
+Damit lässt sich die Frage beantworten, warum ein gekoppeltes Handy nach
+Stunden wieder nach der PIN gefragt wird: hat der Sensor selbst die Bonds
+gelöscht, steht die Heilung mit Zeitpunkt im Protokoll. Steht dort nichts, kam
+es von der Gegenseite.
+
+Setzt Sensor-Firmware mit der Antwort 0x88 voraus; ältere Firmware antwortet
+auf die Anfrage nicht.
+
 ## 1.1.0
 
 **BLE-Diagnose über den CAN-Bus.** Neue Schaltfläche »BLE-Diagnose«. Sie fragt

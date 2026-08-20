@@ -36,7 +36,7 @@ import can
 from nmea2000_reader import (
     BITRATE, FLUID_TYPES, PC_SOURCE_ADDR, PROP_PGN, SENSOR_ADDR, TOOL_VERSION,
     FastPacketAssembler, build_calib_max, build_calib_reset,
-    build_ble_diag, build_sensor_raw,
+    build_ble_diag, build_ble_events, build_sensor_raw,
     build_gf_command_127505, build_lin_table_read, build_lin_table_write,
     build_commanded_address, build_factory_reset, build_gf_command_name,
     decode_address_claim, decode_can_id, decode_config_info,
@@ -221,6 +221,12 @@ class App:
         self.btn_blediag = ttk.Button(row2, text="BLE-Diagnose",
                                       command=self.ble_diag, state="disabled")
         self.btn_blediag.pack(side="right", padx=(0, 6))
+        # Langzeit-Protokoll: Zähler seit dem Start und nur die seltenen
+        # Ereignisse. Das kurze Protokoll der BLE-Diagnose ist im Normalbetrieb
+        # nach Minuten überschrieben und taugt für Fehler nach Stunden nicht.
+        self.btn_bleevt = ttk.Button(row2, text="BLE-Langzeit",
+                                     command=self.ble_events, state="disabled")
+        self.btn_bleevt.pack(side="right", padx=(0, 6))
         # Rohwerte der Druckmessung, fortlaufend. Gedacht zum Zusehen, während
         # von Hand Druck verändert wird - ein einzelner Abruf trifft den
         # Umschlagpunkt nie.
@@ -347,6 +353,7 @@ class App:
             self.btn_cmdaddr.config(state="normal")
             self.btn_freset.config(state="normal")
             self.btn_blediag.config(state="normal")
+            self.btn_bleevt.config(state="normal")
             self.btn_sensraw.config(state="normal")
             self.btn_name.config(state="normal")
             self.lbl_hb.config(text="Heartbeat: warte auf ersten (≤ 60 s) …",
@@ -377,6 +384,7 @@ class App:
         self.btn_cmdaddr.config(state="disabled")
         self.btn_freset.config(state="disabled")
         self.btn_blediag.config(state="disabled")
+        self.btn_bleevt.config(state="disabled")
         self.btn_sensraw.config(state="disabled")
         self.btn_name.config(state="disabled")
         self.status.config(text="getrennt", foreground="red")
@@ -609,6 +617,10 @@ class App:
         """BLE-Diagnose beim Sensor abfragen (Antwort läuft ins Protokoll)."""
         self._send_prop(build_ble_diag(), "BLE-Diagnose angefragt")
 
+    def ble_events(self):
+        """Langzeit-Protokoll des BLE-Zweigs abfragen."""
+        self._send_prop(build_ble_events(), "BLE-Langzeitprotokoll angefragt")
+
     # ---------------- Rohwerte der Druckmessung ----------------
 
     def toggle_sensor_raw(self):
@@ -751,7 +763,7 @@ class App:
                     self.log_line(f"[0x{c_src:02X}] Config Info: "
                                   f"Name='{fields[0] or '–'}'"
                                   + (f"  ({fields[2]})" if fields[2] else ""))
-                elif kind == "ble_diag":
+                elif kind in ("ble_diag", "ble_evt"):
                     for ln in payload.split("\n"):
                         self.log_line(ln)
                 elif kind == "sens_raw":
