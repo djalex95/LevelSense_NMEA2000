@@ -6,6 +6,15 @@ Versionen. Vorher lag es als `PC_Tools/` im Repository
 wollte, musste sich den Quelltext holen und Python einrichten. Freigabe per Tag
 `vX.Y.Z`.
 
+## 1.2.1
+
+Der Zähler im Langzeitprotokoll heißt jetzt »Sackgassen« statt
+»Selbstheilungen«: ab Firmware 2.2.0 wird dabei nichts mehr gelöscht, die
+Sackgasse wird nur noch erkannt und festgehalten. Das neue Ereignis
+»Pairing-Sackgasse erkannt« wird übersetzt; das alte Ereignis der
+ausgelösten Selbstheilung bleibt lesbar, damit Sensoren mit älterer
+Firmware weiterhin richtig angezeigt werden.
+
 ## 1.2.0
 
 **Langzeitprotokoll des BLE-Zweigs.** Neue Schaltfläche »BLE-Langzeit«. Die

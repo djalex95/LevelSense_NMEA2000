@@ -28,7 +28,7 @@ import can
 # die CI. Drei Stellen: groessere Aenderung, kleineres Feature, Bugfix.
 # Freigabe per Tag vX.Y.Z in diesem Repository; die CI prueft, dass Tag und
 # diese Zahl zusammenpassen.
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.2.1"
 
 BITRATE = 250000          # NMEA2000-Standard
 PC_SOURCE_ADDR = 0x25     # Quelladresse dieses PC-Tools am Bus
@@ -475,9 +475,14 @@ def _ble_evt_text(ev: int, p: int) -> str:
     if ev == 0x06:
         return "Modul-Reset gesendet"
     if ev == 0x07:
+        # Bis Firmware 2.1.0. Ab 2.2.0 loescht die Firmware nichts mehr von
+        # sich aus; alte Sensoren koennen das Ereignis aber noch liefern.
         return f"*** Bond-Selbstheilung ausgeloest (Heilung Nr. {p}) ***"
     if ev == 0x08:
         return f"Verbindung ohne Verschluesselung beendet (Zaehler jetzt {p})"
+    if ev == 0x09:
+        return (f"*** Pairing-Sackgasse erkannt (Nr. {p}) - Bonds bleiben "
+                "stehen, Aufraeumen macht die App oder der Werksreset ***")
     return f"unbekanntes Ereignis 0x{ev:02X} (0x{p:02X})"
 
 
@@ -501,9 +506,12 @@ def decode_ble_events(data: bytes, src: int) -> str:
         L.append(f"    *** unbekannte Antwortversion {ver} - Anzeige evtl. falsch ***")
     L += [f"    Verbindungen     : {conn}, verschluesselt beendet {sec}, "
           f"ohne Verschluesselung {nosec}",
-          "    Selbstheilungen  : " + (
+          # Ab Firmware 2.2.0 zaehlt das Feld erkannte Sackgassen, ohne dass
+          # etwas geloescht wird. Aeltere Firmware hat an dieser Stelle
+          # tatsaechlich geheilt - die Ereignisliste unten sagt, was es war.
+          "    Sackgassen       : " + (
               f"{heal}, zuletzt bei Laufzeit {_fmt_uptime(heal_t)}" if heal
-              else "0 (die Firmware hat die Bonds nicht angefasst)"),
+              else "0 (keine Pairing-Sackgasse aufgetreten)"),
           f"    Modul-Neustarts  : {modboot}",
           f"    Ereignisse ({n}):"]
 
