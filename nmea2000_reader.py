@@ -28,7 +28,7 @@ import can
 # die CI. Drei Stellen: groessere Aenderung, kleineres Feature, Bugfix.
 # Freigabe per Tag vX.Y.Z in diesem Repository; die CI prueft, dass Tag und
 # diese Zahl zusammenpassen.
-TOOL_VERSION = "1.2.1"
+TOOL_VERSION = "1.2.2-dev"
 
 BITRATE = 250000          # NMEA2000-Standard
 PC_SOURCE_ADDR = 0x25     # Quelladresse dieses PC-Tools am Bus

@@ -39,6 +39,9 @@ jobs:
         if: github.ref_type == 'tag'
         shell: bash
         run: |
+          case "${{ steps.ver.outputs.ver }}" in
+            *-*) echo "::error::TOOL_VERSION ${{ steps.ver.outputs.ver }} traegt noch ein Suffix. Vor dem Tag die reine Release-Nummer eintragen."; exit 1;;
+          esac
           test "${GITHUB_REF_NAME#v}" = "${{ steps.ver.outputs.ver }}" \
             || { echo "::error::Tag ${GITHUB_REF_NAME} passt nicht zu TOOL_VERSION ${{ steps.ver.outputs.ver }}"; exit 1; }
 
